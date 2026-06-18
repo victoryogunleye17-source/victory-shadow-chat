@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Dashboard · Shadow Chat</title>
+<link rel="stylesheet" href="/css/main.css">
+<link rel="stylesheet" href="/css/admin.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="ambient-bg"></div>
+
+<div id="accessDenied" class="center-screen" style="display:none;">
+  <div class="glass" style="padding:40px;text-align:center;max-width:400px;">
+    <div style="font-size:40px;margin-bottom:12px;">🔒</div>
+    <h2 class="display">Access Denied</h2>
+    <p class="text-secondary">This area is restricted to administrators.</p>
+    <a href="/chat.html" class="btn btn-primary" style="margin-top:16px;">Back to Chat</a>
+  </div>
+</div>
+
+<div class="admin-shell" id="adminShell" style="display:none;">
+  <aside class="admin-nav glass">
+    <div class="admin-logo">
+      <span class="signal-ring online"><span class="avatar" style="width:36px;height:36px;display:flex;background:linear-gradient(135deg,#3fa9ff,#11182c);color:#05060a;">🛡</span></span>
+      <div>
+        <div style="font-weight:700;font-size:14px;">Admin Console</div>
+        <div class="text-tertiary" style="font-size:11px;" id="adminRoleLabel">—</div>
+      </div>
+    </div>
+    <nav class="admin-nav-links">
+      <button class="nav-link active" data-tab="overview">📊 Overview</button>
+      <button class="nav-link" data-tab="users">👥 Users</button>
+      <button class="nav-link" data-tab="reports">🚩 Reports</button>
+      <button class="nav-link" data-tab="legal" id="legalNavBtn" style="display:none;">⚖️ Legal Requests</button>
+      <button class="nav-link" data-tab="security">🛡 Security Logs</button>
+    </nav>
+    <a href="/chat.html" class="btn btn-ghost" style="margin-top:auto;width:100%;">← Back to Chat</a>
+  </aside>
+
+  <main class="admin-main">
+    <!-- Overview -->
+    <section class="admin-tab" id="tab-overview">
+      <h1 class="display">Platform Overview</h1>
+      <div class="stats-grid" id="statsGrid"></div>
+      <div class="glass" style="padding:20px;margin-top:20px;">
+        <h3 style="margin-top:0;">Security events (last 24h)</h3>
+        <div id="securityEventsSummary" class="text-secondary">Loading…</div>
+      </div>
+    </section>
+
+    <!-- Users -->
+    <section class="admin-tab" id="tab-users" style="display:none;">
+      <h1 class="display">User Management</h1>
+      <input type="text" id="userSearchAdmin" placeholder="Search by username or email…" class="admin-search">
+      <div class="table-wrap">
+        <table class="admin-table" id="usersTable">
+          <thead><tr><th>User</th><th>Status</th><th>Role</th><th>Joined</th><th>Location</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Reports -->
+    <section class="admin-tab" id="tab-reports" style="display:none;">
+      <h1 class="display">User Reports</h1>
+      <div class="filter-pills" id="reportFilters">
+        <button class="pill active" data-status="open">Open</button>
+        <button class="pill" data-status="reviewing">Reviewing</button>
+        <button class="pill" data-status="resolved">Resolved</button>
+        <button class="pill" data-status="dismissed">Dismissed</button>
+        <button class="pill" data-status="all">All</button>
+      </div>
+      <div id="reportsList"></div>
+    </section>
+
+    <!-- Legal Requests (owner only) -->
+    <section class="admin-tab" id="tab-legal" style="display:none;">
+      <h1 class="display">Legal Requests</h1>
+      <p class="text-secondary" style="max-width:600px;">
+        Log and track law-enforcement / court-order requests for account or message data.
+        This is the only lawful channel for reviewing sensitive content tied to a specific
+        legal basis (e.g. a national-security or criminal matter) — there is no general
+        admin ability to browse private messages.
+      </p>
+      <button class="btn btn-primary" id="newLegalRequestBtn" style="margin-bottom:16px;">+ Log New Request</button>
+      <div id="legalRequestsList"></div>
+    </section>
+
+    <!-- Security logs -->
+    <section class="admin-tab" id="tab-security" style="display:none;">
+      <h1 class="display">Security Logs</h1>
+      <div class="table-wrap">
+        <table class="admin-table" id="securityTable">
+          <thead><tr><th>Event</th><th>User</th><th>IP</th><th>Details</th><th>Time</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Moderate user modal -->
+<div class="modal-overlay" id="moderateModal" style="display:none;">
+  <div class="modal glass">
+    <div class="modal-header"><h3>Moderate User</h3><button class="icon-btn" id="closeModerateModal">✕</button></div>
+    <div id="moderateAlert"></div>
+    <p id="moderateUserLabel" style="font-weight:600;"></p>
+    <div class="field">
+      <label>Reason (for ban/suspend)</label>
+      <input type="text" id="moderateReason" placeholder="e.g. Repeated harassment reports">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="banBtn">Ban</button>
+      <button class="btn btn-ghost" id="unbanBtn">Unban</button>
+      <button class="btn btn-danger" id="suspendBtn">Suspend 24h</button>
+      <button class="btn btn-ghost" id="unsuspendBtn">Lift Suspension</button>
+    </div>
+  </div>
+</div>
+
+<!-- New legal request modal -->
+<div class="modal-overlay" id="legalModal" style="display:none;">
+  <div class="modal glass">
+    <div class="modal-header"><h3>Log Legal Request</h3><button class="icon-btn" id="closeLegalModal">✕</button></div>
+    <div id="legalAlert"></div>
+    <div class="field"><label>Requested by (agency/officer)</label><input type="text" id="legalRequestedBy"></div>
+    <div class="field"><label>Case reference</label><input type="text" id="legalCaseRef"></div>
+    <div class="field"><label>Legal basis (court order / subpoena ref)</label><input type="text" id="legalBasis"></div>
+    <div class="field"><label>Target username (optional)</label><input type="text" id="legalTargetUsername"></div>
+    <div class="field"><label>Scope of request</label><textarea id="legalScope" rows="3"></textarea></div>
+    <button class="btn btn-primary" id="submitLegalBtn" style="width:100%;">Log Request</button>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/admin.js"></script>
+</body>
+</html>
