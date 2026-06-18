@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create Account · Shadow Chat</title>
+<link rel="stylesheet" href="/css/main.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="ambient-bg"></div>
+
+<div class="center-screen">
+  <div class="glass" style="width:100%;max-width:420px;padding:40px 36px;">
+
+    <div style="text-align:center;margin-bottom:32px;">
+      <div class="signal-ring online" style="margin-bottom:14px;">
+        <div class="avatar" style="width:52px;height:52px;font-size:22px;background:linear-gradient(135deg,#3fa9ff,#11182c);color:#05060a;">SC</div>
+      </div>
+      <h1 class="display" style="font-size:26px;margin:0 0 4px;">Create your account</h1>
+      <p class="text-secondary" style="font-size:14px;margin:0;">Takes less than a minute.</p>
+    </div>
+
+    <div id="alertBox"></div>
+
+    <form id="registerForm">
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" required minlength="3" maxlength="32" placeholder="e.g. ayo_codes" pattern="[a-zA-Z0-9_.]+">
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" required autocomplete="email" placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;" id="submitBtn">
+        Create Account
+      </button>
+    </form>
+
+    <div style="text-align:center;margin-top:20px;font-size:13px;">
+      <span class="text-secondary">Already have an account?</span> <a href="/login.html">Sign in</a>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+  const form = document.getElementById('registerForm');
+  const alertBox = document.getElementById('alertBox');
+  const submitBtn = document.getElementById('submitBtn');
+
+  if (ShadowAPI.getToken()) window.location.href = '/chat.html';
+
+  function showAlert(message, type = 'error') {
+    alertBox.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    alertBox.innerHTML = '';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating account…';
+
+    const username = document.getElementById('username').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+
+    try {
+      await ShadowAPI.post('/api/auth?action=register', { username, email, password });
+      window.location.href = `/check-email.html?email=${encodeURIComponent(email)}`;
+    } catch (err) {
+      showAlert(err.message || 'Could not create account.');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create Account';
+    }
+  });
+</script>
+</body>
+</html>

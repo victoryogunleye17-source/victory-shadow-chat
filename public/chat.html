@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Shadow Chat</title>
+<link rel="stylesheet" href="/css/main.css">
+<link rel="stylesheet" href="/css/chat.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://js.pusher.com/8.4.0/pusher.min.js"></script>
+</head>
+<body>
+<div class="ambient-bg"></div>
+
+<div class="app-shell" id="appShell">
+
+  <!-- ===== Sidebar: conversation list ===== -->
+  <aside class="sidebar glass" id="sidebar">
+    <div class="sidebar-header">
+      <div class="me-row">
+        <div class="signal-ring online">
+          <img class="avatar" id="myAvatar" width="40" height="40" alt="">
+        </div>
+        <div class="me-info">
+          <div class="me-name" id="myUsername">—</div>
+          <div class="me-status text-tertiary">Online</div>
+        </div>
+      </div>
+      <div class="sidebar-actions">
+        <button class="icon-btn" id="newChatBtn" title="New conversation">✚</button>
+        <button class="icon-btn" id="profileBtn" title="Profile & settings">⚙</button>
+        <a class="icon-btn" id="adminLink" href="/admin.html" title="Admin Dashboard" style="display:none;text-decoration:none;">🛡</a>
+      </div>
+    </div>
+
+    <div class="search-box">
+      <input type="text" id="searchConversations" placeholder="Search conversations…">
+    </div>
+
+    <div class="conversation-list" id="conversationList">
+      <div class="empty-state text-tertiary" id="convEmptyState">No conversations yet. Tap ✚ to start one.</div>
+    </div>
+  </aside>
+
+  <!-- ===== Main chat panel ===== -->
+  <main class="chat-panel" id="chatPanel">
+    <div class="chat-empty" id="chatEmpty">
+      <div style="font-size:48px;margin-bottom:12px;">🔒</div>
+      <h2 class="display" style="font-size:20px;">Select a conversation</h2>
+      <p class="text-secondary">Your messages are private. Pick someone to start chatting.</p>
+    </div>
+
+    <div class="chat-active" id="chatActive" style="display:none;">
+      <header class="chat-header glass">
+        <button class="icon-btn back-btn" id="backBtn">←</button>
+        <div class="signal-ring" id="headerRing">
+          <img class="avatar" id="headerAvatar" width="38" height="38" alt="">
+        </div>
+        <div class="chat-header-info">
+          <div class="chat-header-name" id="headerName">—</div>
+          <div class="chat-header-status text-tertiary" id="headerStatus">offline</div>
+        </div>
+        <div class="chat-header-actions">
+          <button class="icon-btn" id="moreBtn" title="More">⋮</button>
+          <div class="dropdown-menu" id="moreMenu">
+            <button id="blockBtn">Block user</button>
+            <button id="reportBtn">Report user</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="messages-scroll" id="messagesScroll">
+        <div class="messages-list" id="messagesList"></div>
+        <div class="typing-indicator" id="typingIndicator" style="display:none;">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <form class="composer glass" id="composerForm">
+        <button type="button" class="icon-btn" id="attachBtn" title="Attach file">📎</button>
+        <input type="file" id="fileInput" hidden>
+        <button type="button" class="icon-btn" id="emojiBtn" title="Emoji">😊</button>
+        <div class="emoji-picker" id="emojiPicker"></div>
+        <textarea id="messageInput" placeholder="Type a message…" rows="1"></textarea>
+        <button type="submit" class="btn btn-primary send-btn" id="sendBtn">➤</button>
+      </form>
+      <div id="attachPreview" class="attach-preview" style="display:none;"></div>
+    </div>
+  </main>
+</div>
+
+<!-- ===== New chat modal ===== -->
+<div class="modal-overlay" id="newChatModal" style="display:none;">
+  <div class="modal glass">
+    <div class="modal-header">
+      <h3>Start a conversation</h3>
+      <button class="icon-btn" id="closeNewChatModal">✕</button>
+    </div>
+    <input type="text" id="userSearchInput" placeholder="Search by username…" autocomplete="off">
+    <div class="user-search-results" id="userSearchResults"></div>
+  </div>
+</div>
+
+<!-- ===== Profile modal ===== -->
+<div class="modal-overlay" id="profileModal" style="display:none;">
+  <div class="modal glass">
+    <div class="modal-header">
+      <h3>Profile & Settings</h3>
+      <button class="icon-btn" id="closeProfileModal">✕</button>
+    </div>
+    <div id="profileAlert"></div>
+    <div class="field">
+      <label>Avatar URL</label>
+      <input type="text" id="profileAvatarUrl" placeholder="https://…">
+    </div>
+    <div class="field">
+      <label>Status message</label>
+      <input type="text" id="profileStatus" maxlength="100" placeholder="What's on your mind?">
+    </div>
+    <div class="field">
+      <label>Bio</label>
+      <textarea id="profileBio" maxlength="280" rows="3" placeholder="Tell people about yourself"></textarea>
+    </div>
+    <div class="field toggle-field">
+      <label style="margin:0;">Share my location with admin (opt-in, for safety review only)</label>
+      <input type="checkbox" id="profileShareLocation">
+    </div>
+    <button class="btn btn-primary" id="saveProfileBtn" style="width:100%;">Save Changes</button>
+    <button class="btn btn-ghost" id="logoutBtn" style="width:100%;margin-top:10px;">Log Out</button>
+  </div>
+</div>
+
+<!-- ===== Report modal ===== -->
+<div class="modal-overlay" id="reportModal" style="display:none;">
+  <div class="modal glass">
+    <div class="modal-header">
+      <h3>Report user</h3>
+      <button class="icon-btn" id="closeReportModal">✕</button>
+    </div>
+    <div id="reportAlert"></div>
+    <div class="field">
+      <label>Reason</label>
+      <select id="reportReason" style="width:100%;background:rgba(5,6,10,0.6);border:1px solid var(--border-soft);border-radius:10px;color:var(--text-primary);padding:13px 16px;">
+        <option value="spam">Spam</option>
+        <option value="harassment">Harassment</option>
+        <option value="threat">Threat / violence</option>
+        <option value="csam">Child safety violation</option>
+        <option value="impersonation">Impersonation</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Details (optional)</label>
+      <textarea id="reportDetails" rows="3" placeholder="Add any helpful context"></textarea>
+    </div>
+    <button class="btn btn-danger" id="submitReportBtn" style="width:100%;">Submit Report</button>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/chat.js"></script>
+</body>
+</html>

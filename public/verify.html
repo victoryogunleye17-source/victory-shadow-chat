@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify Email · Shadow Chat</title>
+<link rel="stylesheet" href="/css/main.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="ambient-bg"></div>
+<div class="center-screen">
+  <div class="glass" style="width:100%;max-width:440px;padding:40px 36px;text-align:center;" id="card">
+    <div id="spinner" style="font-size:40px;margin-bottom:16px;">⏳</div>
+    <h1 class="display" style="font-size:22px;margin:0 0 12px;" id="title">Verifying your email…</h1>
+    <p class="text-secondary" id="message" style="font-size:14px;"></p>
+    <a href="/login.html" class="btn btn-primary" style="width:100%;padding:14px;margin-top:20px;display:none;" id="loginBtn">Go to Sign In</a>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+  (async () => {
+    const params = new URLSearchParams(window.location.search);
+    const email = params.get('email');
+    const token = params.get('token');
+    const titleEl = document.getElementById('title');
+    const messageEl = document.getElementById('message');
+    const spinnerEl = document.getElementById('spinner');
+    const loginBtn = document.getElementById('loginBtn');
+
+    if (!email || !token) {
+      spinnerEl.textContent = '⚠️';
+      titleEl.textContent = 'Invalid link';
+      messageEl.textContent = 'This verification link is missing required information.';
+      return;
+    }
+
+    try {
+      const data = await ShadowAPI.post('/api/auth?action=verify-email', { email, token });
+      spinnerEl.textContent = '✅';
+      titleEl.textContent = 'Email verified!';
+      messageEl.textContent = data.message || 'Your account is now active.';
+      loginBtn.style.display = 'inline-flex';
+    } catch (err) {
+      spinnerEl.textContent = '⚠️';
+      titleEl.textContent = 'Verification failed';
+      messageEl.textContent = err.message || 'This link may have expired.';
+    }
+  })();
+</script>
+</body>
+</html>

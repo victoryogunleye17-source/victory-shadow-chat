@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Check Your Email · Shadow Chat</title>
+<link rel="stylesheet" href="/css/main.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="ambient-bg"></div>
+<div class="center-screen">
+  <div class="glass" style="width:100%;max-width:440px;padding:40px 36px;text-align:center;">
+    <div style="font-size:44px;margin-bottom:16px;">📨</div>
+    <h1 class="display" style="font-size:24px;margin:0 0 12px;">Check your inbox</h1>
+    <p class="text-secondary" style="font-size:14px;line-height:1.6;margin-bottom:28px;">
+      We sent a verification link to <strong id="emailDisplay" style="color:var(--text-primary);"></strong>.
+      Click it to activate your account, then sign in.
+    </p>
+    <a href="/login.html" class="btn btn-primary" style="width:100%;padding:14px;">Go to Sign In</a>
+    <p style="margin-top:20px;font-size:13px;">
+      <span class="text-secondary">Didn't get it?</span>
+      <a id="resendLink" href="#">Resend email</a>
+    </p>
+    <div id="resendMsg" style="margin-top:12px;"></div>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const email = params.get('email') || '';
+  document.getElementById('emailDisplay').textContent = email;
+  document.getElementById('resendLink').href = `/resend-verification.html?email=${encodeURIComponent(email)}`;
+</script>
+</body>
+</html>

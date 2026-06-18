@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shadow Chat — Private, Secure Messaging</title>
+<link rel="stylesheet" href="/css/main.css">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="ambient-bg"></div>
+<div class="center-screen">
+  <div style="text-align:center;max-width:480px;">
+    <div class="signal-ring online" style="margin-bottom:20px;">
+      <div class="avatar" style="width:64px;height:64px;font-size:26px;background:linear-gradient(135deg,#3fa9ff,#11182c);color:#05060a;">SC</div>
+    </div>
+    <h1 class="display" style="font-size:32px;margin:0 0 12px;">Shadow Chat</h1>
+    <p class="text-secondary" style="font-size:15px;line-height:1.6;margin-bottom:32px;">
+      Private, real-time messaging built for people who value their conversations.
+    </p>
+    <div style="display:flex;gap:12px;justify-content:center;">
+      <a href="/login.html" class="btn btn-ghost">Sign In</a>
+      <a href="/register.html" class="btn btn-primary">Create Account</a>
+    </div>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+  if (ShadowAPI.getToken()) window.location.href = '/chat.html';
+</script>
+</body>
+</html>
