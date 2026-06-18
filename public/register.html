@@ -72,7 +72,7 @@
 
     try {
       await ShadowAPI.post('/api/auth?action=register', { username, email, password });
-      window.location.href = `/check-email.html?email=${encodeURIComponent(email)}`;
+      window.location.href = `/login.html`;
     } catch (err) {
       showAlert(err.message || 'Could not create account.');
       submitBtn.disabled = false;
