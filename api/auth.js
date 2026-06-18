@@ -67,19 +67,16 @@ async function register(req, res) {
     const passwordHash = await hashPassword(password);
     const role = resolveRoleForEmail(normalizedEmail);
     const [user] = await sql`
-      INSERT INTO users (username, email, password_hash, role)
-      VALUES (${username}, ${normalizedEmail}, ${passwordHash}, ${role})
+      INSERT INTO users (username, email, password_hash, role, is_verified)
+      VALUES (${username}, ${normalizedEmail}, ${passwordHash}, ${role}, TRUE)
       RETURNING id, username, email, role
     `;
 
-    const rawToken = generateRawToken();
-    const tokenHash = hashToken(rawToken);
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await sql`INSERT INTO auth_tokens (user_id, token_hash, type, expires_at) VALUES (${user.id}, ${tokenHash}, 'verify_email', ${expiresAt.toISOString()})`;
-    await sendVerificationEmail(normalizedEmail, username, rawToken);
+    // Email verification skipped — users are auto-verified on signup.
+    // Re-enable sendVerificationEmail here when a real domain is added to Resend.
     await logSecurityEvent('account_created', { userId: user.id, ip });
 
-    return ok(res, { message: 'Account created. Check your email to verify your account.', user: { id: user.id, username: user.username, email: user.email } }, 201);
+    return ok(res, { message: 'Account created successfully. You can now log in.', user: { id: user.id, username: user.username, email: user.email } }, 201);
   } catch (err) {
     console.error('[register]', err);
     return fail(res, 'Something went wrong creating your account.', 500);
@@ -105,7 +102,7 @@ async function login(req, res) {
     if (user.is_suspended && (!user.suspended_until || new Date(user.suspended_until) > new Date())) {
       return fail(res, 'This account is temporarily suspended.', 403, { suspended: true, suspendedUntil: user.suspended_until });
     }
-    if (!user.is_verified) return fail(res, 'Please verify your email before logging in.', 403, { needsVerification: true });
+    // Email verification check removed — users are auto-verified on signup.
 
     const token = signToken(user);
     await sql`UPDATE users SET is_online = TRUE, last_seen = NOW() WHERE id = ${user.id}`;
@@ -252,4 +249,4 @@ async function resendVerification(req, res) {
     }
     return ok(res, { message: 'If that account exists and is unverified, a new verification email has been sent.' });
   } catch (err) { return fail(res, 'Something went wrong.', 500); }
-}
+        }
