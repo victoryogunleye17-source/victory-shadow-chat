@@ -107,8 +107,24 @@ async function messages(auth, req, res) {
       if (!conv) return fail(res, 'Conversation not found.', 404);
       const cappedLimit = Math.min(Number(limit) || 50, 100);
       const rows = before
-        ? await sql`SELECT * FROM messages WHERE conversation_id = ${conversationId} AND created_at < ${before} ORDER BY created_at DESC LIMIT ${cappedLimit}`
-        : await sql`SELECT * FROM messages WHERE conversation_id = ${conversationId} ORDER BY created_at DESC LIMIT ${cappedLimit}`;
+        ? await sql`
+            SELECT m.*, ru.username AS reply_sender_username, rm.content AS reply_content,
+                   rm.attachment_type AS reply_attachment_type, rm.is_deleted AS reply_is_deleted
+            FROM messages m
+            LEFT JOIN messages rm ON rm.id = m.reply_to_id
+            LEFT JOIN users ru ON ru.id = rm.sender_id
+            WHERE m.conversation_id = ${conversationId} AND m.created_at < ${before}
+            ORDER BY m.created_at DESC LIMIT ${cappedLimit}
+          `
+        : await sql`
+            SELECT m.*, ru.username AS reply_sender_username, rm.content AS reply_content,
+                   rm.attachment_type AS reply_attachment_type, rm.is_deleted AS reply_is_deleted
+            FROM messages m
+            LEFT JOIN messages rm ON rm.id = m.reply_to_id
+            LEFT JOIN users ru ON ru.id = rm.sender_id
+            WHERE m.conversation_id = ${conversationId}
+            ORDER BY m.created_at DESC LIMIT ${cappedLimit}
+          `;
       const unreadIds = rows.filter((m) => m.sender_id !== auth.sub && !m.read_at).map((m) => m.id);
       if (unreadIds.length > 0) {
         await sql`UPDATE messages SET read_at = NOW() WHERE id = ANY(${unreadIds})`;
@@ -123,7 +139,7 @@ async function messages(auth, req, res) {
     const { success } = await checkRateLimit('message', auth.sub);
     if (!success) { await logSecurityEvent('rate_limit_hit', { userId: auth.sub, ip }); return fail(res, 'Sending too fast. Please slow down.', 429); }
     try {
-      const { conversationId, content = '', attachmentUrl, attachmentType, attachmentName } = req.body || {};
+      const { conversationId, content = '', attachmentUrl, attachmentType, attachmentName, replyToId } = req.body || {};
       if (!conversationId) return fail(res, 'conversationId is required.');
       if (!content.trim() && !attachmentUrl) return fail(res, 'Message cannot be empty.');
       if (content.length > 5000) return fail(res, 'Message too long (max 5000 chars).');
@@ -132,9 +148,29 @@ async function messages(auth, req, res) {
       const other = otherParticipant(conv, auth.sub);
       const blocked = await sql`SELECT 1 FROM blocks WHERE blocker_id = ${other} AND blocked_id = ${auth.sub} LIMIT 1`;
       if (blocked.length > 0) return fail(res, 'You can no longer message this user.', 403);
+
+      // If replying, the target message must exist in this same conversation —
+      // prevents quoting a message from a conversation the sender isn't even in.
+      let validReplyToId = null;
+      if (replyToId) {
+        const [target] = await sql`SELECT id FROM messages WHERE id = ${replyToId} AND conversation_id = ${conversationId}`;
+        if (target) validReplyToId = target.id;
+      }
+
       if (isLikelySpam(content)) await logSecurityEvent('suspicious_pattern', { userId: auth.sub, ip, metadata: { conversationId } });
-      const [message] = await sql`INSERT INTO messages (conversation_id, sender_id, content, attachment_url, attachment_type, attachment_name, delivered_at) VALUES (${conversationId}, ${auth.sub}, ${content.trim()}, ${attachmentUrl || null}, ${attachmentType || null}, ${attachmentName || null}, NOW()) RETURNING *`;
+      const [inserted] = await sql`INSERT INTO messages (conversation_id, sender_id, content, attachment_url, attachment_type, attachment_name, reply_to_id, delivered_at) VALUES (${conversationId}, ${auth.sub}, ${content.trim()}, ${attachmentUrl || null}, ${attachmentType || null}, ${attachmentName || null}, ${validReplyToId}, NOW()) RETURNING *`;
       await sql`UPDATE conversations SET last_message_at = NOW() WHERE id = ${conversationId}`;
+
+      // Re-fetch with the reply join so the broadcasted payload includes the quoted preview.
+      const [message] = await sql`
+        SELECT m.*, ru.username AS reply_sender_username, rm.content AS reply_content,
+               rm.attachment_type AS reply_attachment_type, rm.is_deleted AS reply_is_deleted
+        FROM messages m
+        LEFT JOIN messages rm ON rm.id = m.reply_to_id
+        LEFT JOIN users ru ON ru.id = rm.sender_id
+        WHERE m.id = ${inserted.id}
+      `;
+
       const payload = serializeMessage(message);
       await triggerEvent(conversationChannel(conversationId), 'new-message', payload);
       await triggerEvent(userChannel(other), 'conversation-updated', { conversationId, lastMessage: payload });
@@ -280,4 +316,5 @@ async function pusherAuth(auth, req, res) {
     }
     return fail(res, 'Forbidden.', 403);
   } catch (err) { return fail(res, 'Something went wrong.', 500); }
-}
+    }
+    
