@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS messages (
   attachment_url  TEXT DEFAULT NULL,
   attachment_type VARCHAR(20) DEFAULT NULL,   -- 'image' | 'file'
   attachment_name TEXT DEFAULT NULL,
+  reply_to_id     UUID REFERENCES messages(id) ON DELETE SET NULL,  -- for swipe-to-reply / quoted replies
   reactions       JSONB DEFAULT '{}',          -- { "👍": ["userId1","userId2"] }
   is_edited       BOOLEAN NOT NULL DEFAULT FALSE,
   is_deleted      BOOLEAN NOT NULL DEFAULT FALSE,
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON messages(reply_to_id);
 
 -- ---------- BLOCKS ----------
 CREATE TABLE IF NOT EXISTS blocks (
