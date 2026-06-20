@@ -20,6 +20,8 @@
   let pendingAttachment = null;
   let typingTimeout = null;
   let subscribedChannels = {};
+  let pendingReplyTo = null; // { id, senderUsername, content, attachmentType, isDeleted } or null
+  let locationWatchId = null;
 
   const el = (id) => document.getElementById(id);
 
@@ -61,6 +63,7 @@
     el('profileStatus').value = me.statusMessage || '';
     el('profileBio').value = me.bio || '';
     el('profileShareLocation').checked = !!me.shareLocation;
+    if (me.shareLocation) startLocationWatch();
   }
 
   function setAvatar(imgEl, user) {
@@ -132,6 +135,7 @@
   async function openConversation(conv) {
     activeConversationId = conv.id;
     activeOtherUser = conv.otherUser;
+    cancelReply();
 
     el('chatEmpty').style.display = 'none';
     el('chatActive').style.display = 'flex';
@@ -182,12 +186,34 @@
     row.className = 'msg-row ' + (m.senderId === me.id ? 'mine' : 'theirs');
     row.dataset.id = m.id;
 
+    const replyIcon = document.createElement('div');
+    replyIcon.className = 'swipe-reply-icon';
+    replyIcon.textContent = '↩';
+    row.appendChild(replyIcon);
+
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble' + (m.isDeleted ? ' deleted' : '');
 
     if (m.isDeleted) {
       bubble.textContent = 'This message was deleted';
     } else {
+      if (m.replyPreview) {
+        const quote = document.createElement('div');
+        quote.className = 'reply-quote';
+        const quoteSender = document.createElement('div');
+        quoteSender.className = 'reply-quote-sender';
+        quoteSender.textContent = m.replyPreview.senderUsername === me.username ? 'You' : m.replyPreview.senderUsername;
+        const quoteText = document.createElement('div');
+        quoteText.className = 'reply-quote-text';
+        quoteText.textContent = m.replyPreview.isDeleted
+          ? 'Message deleted'
+          : (m.replyPreview.attachmentType ? (m.replyPreview.attachmentType === 'image' ? '📷 Photo' : '📎 File') : (m.replyPreview.content || ''));
+        quote.appendChild(quoteSender);
+        quote.appendChild(quoteText);
+        quote.addEventListener('click', () => scrollToMessage(m.replyPreview.id));
+        bubble.appendChild(quote);
+      }
+
       if (m.attachmentUrl) {
         if (m.attachmentType === 'image') {
           const img = document.createElement('img');
@@ -243,6 +269,12 @@
       const actions = document.createElement('div');
       actions.className = 'msg-actions';
 
+      const replyBtn = document.createElement('button');
+      replyBtn.textContent = '↩';
+      replyBtn.title = 'Reply';
+      replyBtn.addEventListener('click', () => startReply(m));
+      actions.appendChild(replyBtn);
+
       const reactBtn = document.createElement('button');
       reactBtn.textContent = '😊';
       reactBtn.title = 'React';
@@ -264,9 +296,88 @@
       }
 
       row.appendChild(actions);
+
+      // Swipe-to-reply (touch gesture)
+      bindSwipeToReply(row, m);
     }
 
     return row;
+  }
+
+  // ---------- Swipe to reply ----------
+  function bindSwipeToReply(row, message) {
+    let startX = 0;
+    let currentX = 0;
+    let dragging = false;
+    const THRESHOLD = 56; // px of swipe before reply triggers
+    const MAX_DRAG = 80;
+
+    row.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      startX = e.touches[0].clientX;
+      dragging = true;
+      row.classList.add('swiping');
+    }, { passive: true });
+
+    row.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      currentX = e.touches[0].clientX - startX;
+      // Only allow the natural swipe direction: theirs -> swipe right, mine -> swipe left
+      const isMine = row.classList.contains('mine');
+      const dx = isMine ? Math.min(0, currentX) : Math.max(0, currentX);
+      const clamped = Math.max(-MAX_DRAG, Math.min(MAX_DRAG, dx));
+      row.style.transform = `translateX(${clamped}px)`;
+      row.classList.toggle('swipe-active', Math.abs(clamped) > THRESHOLD * 0.6);
+    }, { passive: true });
+
+    row.addEventListener('touchend', () => {
+      if (!dragging) return;
+      dragging = false;
+      row.classList.remove('swiping');
+      row.classList.add('swipe-snap-back');
+      const triggered = Math.abs(currentX) > THRESHOLD;
+      row.style.transform = 'translateX(0)';
+      row.classList.remove('swipe-active');
+      if (triggered) startReply(message);
+      currentX = 0;
+      setTimeout(() => row.classList.remove('swipe-snap-back'), 250);
+    });
+  }
+
+  function startReply(message) {
+    pendingReplyTo = {
+      id: message.id,
+      senderUsername: message.senderId === me.id ? me.username : (activeOtherUser?.username || 'User'),
+      content: message.content,
+      attachmentType: message.attachmentType,
+      isDeleted: message.isDeleted,
+    };
+    renderReplyPreviewBar();
+    el('messageInput').focus();
+  }
+
+  function renderReplyPreviewBar() {
+    const bar = el('replyPreviewBar');
+    if (!pendingReplyTo) { bar.classList.remove('show'); return; }
+    bar.classList.add('show');
+    el('replyPreviewSender').textContent = pendingReplyTo.senderUsername === me.username ? 'Replying to yourself' : `Replying to ${pendingReplyTo.senderUsername}`;
+    el('replyPreviewText').textContent = pendingReplyTo.isDeleted
+      ? 'Message deleted'
+      : (pendingReplyTo.attachmentType ? (pendingReplyTo.attachmentType === 'image' ? '📷 Photo' : '📎 File') : (pendingReplyTo.content || ''));
+  }
+
+  function cancelReply() {
+    pendingReplyTo = null;
+    renderReplyPreviewBar();
+  }
+
+  function scrollToMessage(messageId) {
+    const target = document.querySelector(`.msg-row[data-id="${messageId}"]`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.style.transition = 'background-color 0.3s ease';
+    target.style.backgroundColor = 'rgba(63,169,255,0.15)';
+    setTimeout(() => { target.style.backgroundColor = ''; }, 900);
   }
 
   function scrollToBottom() {
@@ -286,10 +397,14 @@
       body.attachmentType = pendingAttachment.fileType.startsWith('image/') ? 'image' : 'file';
       body.attachmentName = pendingAttachment.fileName;
     }
+    if (pendingReplyTo) {
+      body.replyToId = pendingReplyTo.id;
+    }
 
     input.value = '';
     autoGrow(input);
     clearAttachmentPreview();
+    cancelReply();
     el('sendBtn').disabled = true;
 
     try {
@@ -403,302 +518,4 @@
       });
 
       const userChannel = pusher.subscribe(`private-user-${me.id}`);
-      userChannel.bind('conversation-updated', ({ conversationId, lastMessage }) => {
-        if (conversationId !== activeConversationId) {
-          const conv = conversations.find((c) => c.id === conversationId);
-          if (conv) {
-            conv.unreadCount = (conv.unreadCount || 0) + 1;
-            bumpConversationToTop(conversationId, lastMessage);
-          } else {
-            loadConversations(); // new conversation we don't know about yet
-          }
-        }
-      });
-
-      conversations.forEach((c) => subscribeToConversation(c.id));
-    }).catch((err) => console.warn('Could not load realtime config', err));
-  }
-
-  function subscribeToConversation(conversationId) {
-    if (!pusher || subscribedChannels[conversationId]) return;
-    const channel = pusher.subscribe(`private-conversation-${conversationId}`);
-    subscribedChannels[conversationId] = channel;
-
-    channel.bind('new-message', (message) => {
-      addOrUpdateMessage(message);
-      bumpConversationToTop(message.conversationId, message);
-    });
-    channel.bind('message-edited', (message) => addOrUpdateMessage(message));
-    channel.bind('message-reaction', (message) => addOrUpdateMessage(message));
-    channel.bind('message-deleted', ({ messageId, conversationId: cid }) => {
-      const msg = messagesCache[cid]?.find((m) => m.id === messageId);
-      if (msg) { msg.isDeleted = true; msg.content = null; msg.attachmentUrl = null; }
-      if (cid === activeConversationId) renderMessages(cid);
-    });
-    channel.bind('typing', ({ userId, isTyping }) => {
-      if (conversationId === activeConversationId && userId !== me.id) showTypingIndicator(isTyping);
-    });
-    channel.bind('messages-read', ({ messageIds }) => {
-      const msgs = messagesCache[conversationId] || [];
-      messageIds.forEach((id) => {
-        const m = msgs.find((x) => x.id === id);
-        if (m) m.readAt = new Date().toISOString();
-      });
-      if (conversationId === activeConversationId) renderMessages(conversationId);
-    });
-  }
-
-  // ---------- New chat / user search ----------
-  let searchDebounce = null;
-  function bindNewChatModal() {
-    el('newChatBtn').addEventListener('click', () => {
-      el('newChatModal').style.display = 'flex';
-      el('userSearchInput').value = '';
-      el('userSearchResults').innerHTML = '';
-      el('userSearchInput').focus();
-    });
-    el('closeNewChatModal').addEventListener('click', () => el('newChatModal').style.display = 'none');
-    el('newChatModal').addEventListener('click', (e) => { if (e.target.id === 'newChatModal') e.currentTarget.style.display = 'none'; });
-
-    el('userSearchInput').addEventListener('input', (e) => {
-      clearTimeout(searchDebounce);
-      const q = e.target.value.trim();
-      searchDebounce = setTimeout(() => searchUsers(q), 300);
-    });
-  }
-
-  async function searchUsers(q) {
-    const results = el('userSearchResults');
-    if (q.length < 2) { results.innerHTML = ''; return; }
-    try {
-      const data = await ShadowAPI.get(`/api/chat?action=search-users&q=${encodeURIComponent(q)}`);
-      results.innerHTML = '';
-      if (data.users.length === 0) {
-        results.innerHTML = '<div class="text-tertiary" style="padding:10px;">No users found.</div>';
-        return;
-      }
-      data.users.forEach((u) => {
-        const item = document.createElement('div');
-        item.className = 'user-result';
-        item.innerHTML = `
-          <div class="signal-ring ${u.isOnline ? 'online' : ''}"><img class="avatar" width="40" height="40" alt=""></div>
-          <div><div style="font-weight:600;font-size:14px;">${escapeHtml(u.username)}</div>
-          <div class="text-tertiary" style="font-size:12px;">${escapeHtml(u.statusMessage || (u.isOnline ? 'Online' : 'Offline'))}</div></div>
-        `;
-        setAvatar(item.querySelector('img'), u);
-        item.addEventListener('click', () => startConversationWith(u));
-        results.appendChild(item);
-      });
-    } catch (err) {
-      results.innerHTML = '<div class="text-tertiary" style="padding:10px;">Search failed.</div>';
-    }
-  }
-
-  async function startConversationWith(user) {
-    try {
-      const data = await ShadowAPI.post('/api/chat?action=conversations', { otherUserId: user.id });
-      el('newChatModal').style.display = 'none';
-      await loadConversations();
-      const conv = conversations.find((c) => c.id === data.conversationId) || {
-        id: data.conversationId, otherUser: user, lastMessage: null, unreadCount: 0,
-      };
-      openConversation(conv);
-    } catch (err) {
-      alert(err.message || 'Could not start conversation.');
-    }
-  }
-
-  // ---------- Attachments ----------
-  function bindAttachments() {
-    el('attachBtn').addEventListener('click', () => el('fileInput').click());
-    el('fileInput').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 15 * 1024 * 1024) { alert('File too large (max 15MB).'); return; }
-
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = reader.result.split(',')[1];
-        try {
-          el('attachPreview').innerHTML = '<span class="text-tertiary">Uploading…</span>';
-          el('attachPreview').style.display = 'flex';
-          const isImage = file.type.startsWith('image/');
-          const data = await ShadowAPI.post('/api/upload', {
-            fileName: file.name,
-            fileType: file.type,
-            base64Data,
-            kind: isImage ? 'chat-image' : 'chat-file',
-          });
-          pendingAttachment = data;
-          renderAttachmentPreview(data, isImage);
-        } catch (err) {
-          alert(err.message || 'Upload failed.');
-          clearAttachmentPreview();
-        }
-      };
-      reader.readAsDataURL(file);
-      e.target.value = '';
-    });
-  }
-
-  function renderAttachmentPreview(data, isImage) {
-    const preview = el('attachPreview');
-    preview.style.display = 'flex';
-    preview.innerHTML = `
-      ${isImage ? `<img src="${data.url}" alt="">` : '📄'}
-      <span>${escapeHtml(data.fileName)}</span>
-      <button id="removeAttachBtn">✕</button>
-    `;
-    el('removeAttachBtn').addEventListener('click', clearAttachmentPreview);
-  }
-
-  function clearAttachmentPreview() {
-    pendingAttachment = null;
-    el('attachPreview').style.display = 'none';
-    el('attachPreview').innerHTML = '';
-  }
-
-  // ---------- Emoji picker ----------
-  function renderEmojiPicker() {
-    const picker = el('emojiPicker');
-    EMOJI_SET.forEach((emoji) => {
-      const span = document.createElement('span');
-      span.textContent = emoji;
-      span.addEventListener('click', () => {
-        const input = el('messageInput');
-        input.value += emoji;
-        input.focus();
-        picker.classList.remove('show');
-      });
-      picker.appendChild(span);
-    });
-  }
-
-  // ---------- Block / Report ----------
-  function bindMoreMenu() {
-    el('moreBtn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      el('moreMenu').classList.toggle('show');
-    });
-    document.addEventListener('click', () => el('moreMenu').classList.remove('show'));
-
-    el('blockBtn').addEventListener('click', async () => {
-      if (!activeOtherUser) return;
-      if (!confirm(`Block ${activeOtherUser.username}? They won't be able to message you.`)) return;
-      try {
-        await ShadowAPI.post('/api/chat?action=block', { userId: activeOtherUser.id });
-        alert('User blocked.');
-      } catch (err) {
-        alert(err.message || 'Failed to block user.');
-      }
-    });
-
-    el('reportBtn').addEventListener('click', () => {
-      el('reportModal').style.display = 'flex';
-    });
-  }
-
-  function bindReportModal() {
-    el('closeReportModal').addEventListener('click', () => el('reportModal').style.display = 'none');
-    el('submitReportBtn').addEventListener('click', async () => {
-      if (!activeOtherUser) return;
-      const reason = el('reportReason').value;
-      const details = el('reportDetails').value.trim();
-      try {
-        await ShadowAPI.post('/api/reports', { reportedUserId: activeOtherUser.id, reason, details });
-        el('reportAlert').innerHTML = '<div class="alert alert-success">Report submitted. Thank you.</div>';
-        setTimeout(() => { el('reportModal').style.display = 'none'; el('reportAlert').innerHTML = ''; el('reportDetails').value = ''; }, 1500);
-      } catch (err) {
-        el('reportAlert').innerHTML = `<div class="alert alert-error">${err.message}</div>`;
-      }
-    });
-  }
-
-  // ---------- Profile modal ----------
-  function bindProfileModal() {
-    el('profileBtn').addEventListener('click', () => el('profileModal').style.display = 'flex');
-    el('closeProfileModal').addEventListener('click', () => el('profileModal').style.display = 'none');
-
-    el('saveProfileBtn').addEventListener('click', async () => {
-      const payload = {
-        avatarUrl: el('profileAvatarUrl').value.trim(),
-        statusMessage: el('profileStatus').value.trim(),
-        bio: el('profileBio').value.trim(),
-        shareLocation: el('profileShareLocation').checked,
-      };
-
-      if (payload.shareLocation && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(async (pos) => {
-          payload.location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          await saveProfile(payload);
-        }, async () => { await saveProfile(payload); });
-      } else {
-        await saveProfile(payload);
-      }
-    });
-
-    el('logoutBtn').addEventListener('click', async () => {
-      try { await ShadowAPI.post('/api/auth?action=logout'); } catch {}
-      ShadowAPI.clearToken();
-      window.location.href = '/login.html';
-    });
-  }
-
-  async function saveProfile(payload) {
-    try {
-      await ShadowAPI.put('/api/auth?action=profile', payload);
-      el('profileAlert').innerHTML = '<div class="alert alert-success">Profile updated.</div>';
-      me = { ...me, ...payload };
-      ShadowAPI.setUser(me);
-      setAvatar(el('myAvatar'), me);
-      setTimeout(() => { el('profileModal').style.display = 'none'; el('profileAlert').innerHTML = ''; }, 1200);
-    } catch (err) {
-      el('profileAlert').innerHTML = `<div class="alert alert-error">${err.message}</div>`;
-    }
-  }
-
-  // ---------- Static event bindings ----------
-  function bindStaticEvents() {
-    el('composerForm').addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
-    el('messageInput').addEventListener('input', (e) => { autoGrow(e.target); handleTypingInput(); });
-    el('messageInput').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    });
-    el('emojiBtn').addEventListener('click', (e) => { e.stopPropagation(); el('emojiPicker').classList.toggle('show'); });
-    document.addEventListener('click', (e) => { if (!el('emojiPicker').contains(e.target) && e.target.id !== 'emojiBtn') el('emojiPicker').classList.remove('show'); });
-
-    el('backBtn').addEventListener('click', () => {
-      el('appShell').classList.remove('show-chat');
-    });
-
-    el('searchConversations').addEventListener('input', (e) => renderConversationList(e.target.value));
-
-    bindNewChatModal();
-    bindAttachments();
-    bindMoreMenu();
-    bindReportModal();
-    bindProfileModal();
-  }
-
-  function autoGrow(textarea) {
-    textarea.style.height = 'auto';
-    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-  }
-
-  function formatTime(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    const now = new Date();
-    const isToday = d.toDateString() === now.toDateString();
-    if (isToday) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }
-
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str || '';
-    return div.innerHTML;
-  }
-
-  init();
-})();
+      userChannel.bind('conversation-updated', ({ convers
