@@ -518,4 +518,337 @@
       });
 
       const userChannel = pusher.subscribe(`private-user-${me.id}`);
-      userChannel.bind('conversation-updated', ({ convers
+      userChannel.bind('conversation-updated', ({ conversationId, lastMessage }) => {
+        if (conversationId !== activeConversationId) {
+          const conv = conversations.find((c) => c.id === conversationId);
+          if (conv) {
+            conv.unreadCount = (conv.unreadCount || 0) + 1;
+            bumpConversationToTop(conversationId, lastMessage);
+          } else {
+            loadConversations(); // new conversation we don't know about yet
+          }
+        }
+      });
+
+      conversations.forEach((c) => subscribeToConversation(c.id));
+    }).catch((err) => console.warn('Could not load realtime config', err));
+  }
+
+  function subscribeToConversation(conversationId) {
+    if (!pusher || subscribedChannels[conversationId]) return;
+    const channel = pusher.subscribe(`private-conversation-${conversationId}`);
+    subscribedChannels[conversationId] = channel;
+
+    channel.bind('new-message', (message) => {
+      addOrUpdateMessage(message);
+      bumpConversationToTop(message.conversationId, message);
+    });
+    channel.bind('message-edited', (message) => addOrUpdateMessage(message));
+    channel.bind('message-reaction', (message) => addOrUpdateMessage(message));
+    channel.bind('message-deleted', ({ messageId, conversationId: cid }) => {
+      const msg = messagesCache[cid]?.find((m) => m.id === messageId);
+      if (msg) { msg.isDeleted = true; msg.content = null; msg.attachmentUrl = null; }
+      if (cid === activeConversationId) renderMessages(cid);
+    });
+    channel.bind('typing', ({ userId, isTyping }) => {
+      if (conversationId === activeConversationId && userId !== me.id) showTypingIndicator(isTyping);
+    });
+    channel.bind('messages-read', ({ messageIds }) => {
+      const msgs = messagesCache[conversationId] || [];
+      messageIds.forEach((id) => {
+        const m = msgs.find((x) => x.id === id);
+        if (m) m.readAt = new Date().toISOString();
+      });
+      if (conversationId === activeConversationId) renderMessages(conversationId);
+    });
+  }
+
+  // ---------- New chat / user search ----------
+  let searchDebounce = null;
+  function bindNewChatModal() {
+    el('newChatBtn').addEventListener('click', () => {
+      el('newChatModal').style.display = 'flex';
+      el('userSearchInput').value = '';
+      el('userSearchResults').innerHTML = '';
+      el('userSearchInput').focus();
+    });
+    el('closeNewChatModal').addEventListener('click', () => el('newChatModal').style.display = 'none');
+    el('newChatModal').addEventListener('click', (e) => { if (e.target.id === 'newChatModal') e.currentTarget.style.display = 'none'; });
+
+    el('userSearchInput').addEventListener('input', (e) => {
+      clearTimeout(searchDebounce);
+      const q = e.target.value.trim();
+      searchDebounce = setTimeout(() => searchUsers(q), 300);
+    });
+  }
+
+  async function searchUsers(q) {
+    const results = el('userSearchResults');
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    try {
+      const data = await ShadowAPI.get(`/api/chat?action=search-users&q=${encodeURIComponent(q)}`);
+      results.innerHTML = '';
+      if (data.users.length === 0) {
+        results.innerHTML = '<div class="text-tertiary" style="padding:10px;">No users found.</div>';
+        return;
+      }
+      data.users.forEach((u) => {
+        const item = document.createElement('div');
+        item.className = 'user-result';
+        item.innerHTML = `
+          <div class="signal-ring ${u.isOnline ? 'online' : ''}"><img class="avatar" width="40" height="40" alt=""></div>
+          <div><div style="font-weight:600;font-size:14px;">${escapeHtml(u.username)}</div>
+          <div class="text-tertiary" style="font-size:12px;">${escapeHtml(u.statusMessage || (u.isOnline ? 'Online' : 'Offline'))}</div></div>
+        `;
+        setAvatar(item.querySelector('img'), u);
+        item.addEventListener('click', () => startConversationWith(u));
+        results.appendChild(item);
+      });
+    } catch (err) {
+      results.innerHTML = '<div class="text-tertiary" style="padding:10px;">Search failed.</div>';
+    }
+  }
+
+  async function startConversationWith(user) {
+    try {
+      const data = await ShadowAPI.post('/api/chat?action=conversations', { otherUserId: user.id });
+      el('newChatModal').style.display = 'none';
+      await loadConversations();
+      const conv = conversations.find((c) => c.id === data.conversationId) || {
+        id: data.conversationId, otherUser: user, lastMessage: null, unreadCount: 0,
+      };
+      openConversation(conv);
+    } catch (err) {
+      alert(err.message || 'Could not start conversation.');
+    }
+  }
+
+  // ---------- Attachments ----------
+  function bindAttachments() {
+    el('attachBtn').addEventListener('click', () => el('fileInput').click());
+    el('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 15 * 1024 * 1024) { alert('File too large (max 15MB).'); return; }
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Data = reader.result.split(',')[1];
+        try {
+          el('attachPreview').innerHTML = '<span class="text-tertiary">Uploading…</span>';
+          el('attachPreview').style.display = 'flex';
+          const isImage = file.type.startsWith('image/');
+          const data = await ShadowAPI.post('/api/upload', {
+            fileName: file.name,
+            fileType: file.type,
+            base64Data,
+            kind: isImage ? 'chat-image' : 'chat-file',
+          });
+          pendingAttachment = data;
+          renderAttachmentPreview(data, isImage);
+        } catch (err) {
+          alert(err.message || 'Upload failed.');
+          clearAttachmentPreview();
+        }
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    });
+  }
+
+  function renderAttachmentPreview(data, isImage) {
+    const preview = el('attachPreview');
+    preview.style.display = 'flex';
+    preview.innerHTML = `
+      ${isImage ? `<img src="${data.url}" alt="">` : '📄'}
+      <span>${escapeHtml(data.fileName)}</span>
+      <button id="removeAttachBtn">✕</button>
+    `;
+    el('removeAttachBtn').addEventListener('click', clearAttachmentPreview);
+  }
+
+  function clearAttachmentPreview() {
+    pendingAttachment = null;
+    el('attachPreview').style.display = 'none';
+    el('attachPreview').innerHTML = '';
+  }
+
+  // ---------- Emoji picker ----------
+  function renderEmojiPicker() {
+    const picker = el('emojiPicker');
+    EMOJI_SET.forEach((emoji) => {
+      const span = document.createElement('span');
+      span.textContent = emoji;
+      span.addEventListener('click', () => {
+        const input = el('messageInput');
+        input.value += emoji;
+        input.focus();
+        picker.classList.remove('show');
+      });
+      picker.appendChild(span);
+    });
+  }
+
+  // ---------- Block / Report ----------
+  function bindMoreMenu() {
+    el('moreBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      el('moreMenu').classList.toggle('show');
+    });
+    document.addEventListener('click', () => el('moreMenu').classList.remove('show'));
+
+    el('blockBtn').addEventListener('click', async () => {
+      if (!activeOtherUser) return;
+      if (!confirm(`Block ${activeOtherUser.username}? They won't be able to message you.`)) return;
+      try {
+        await ShadowAPI.post('/api/chat?action=block', { userId: activeOtherUser.id });
+        alert('User blocked.');
+      } catch (err) {
+        alert(err.message || 'Failed to block user.');
+      }
+    });
+
+    el('reportBtn').addEventListener('click', () => {
+      el('reportModal').style.display = 'flex';
+    });
+  }
+
+  function bindReportModal() {
+    el('closeReportModal').addEventListener('click', () => el('reportModal').style.display = 'none');
+    el('submitReportBtn').addEventListener('click', async () => {
+      if (!activeOtherUser) return;
+      const reason = el('reportReason').value;
+      const details = el('reportDetails').value.trim();
+      try {
+        await ShadowAPI.post('/api/reports', { reportedUserId: activeOtherUser.id, reason, details });
+        el('reportAlert').innerHTML = '<div class="alert alert-success">Report submitted. Thank you.</div>';
+        setTimeout(() => { el('reportModal').style.display = 'none'; el('reportAlert').innerHTML = ''; el('reportDetails').value = ''; }, 1500);
+      } catch (err) {
+        el('reportAlert').innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+      }
+    });
+  }
+
+  // ---------- Profile modal ----------
+  function bindProfileModal() {
+    el('profileBtn').addEventListener('click', () => el('profileModal').style.display = 'flex');
+    el('closeProfileModal').addEventListener('click', () => el('profileModal').style.display = 'none');
+
+    el('saveProfileBtn').addEventListener('click', async () => {
+      const payload = {
+        avatarUrl: el('profileAvatarUrl').value.trim(),
+        statusMessage: el('profileStatus').value.trim(),
+        bio: el('profileBio').value.trim(),
+        shareLocation: el('profileShareLocation').checked,
+      };
+
+      if (payload.shareLocation && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+          payload.location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          await saveProfile(payload);
+          startLocationWatch(); // begin continuous updates now that sharing is on
+        }, async () => { await saveProfile(payload); });
+      } else {
+        stopLocationWatch(); // sharing turned off — stop tracking immediately
+        await saveProfile(payload);
+      }
+    });
+
+    el('logoutBtn').addEventListener('click', async () => {
+      stopLocationWatch();
+      try { await ShadowAPI.post('/api/auth?action=logout'); } catch {}
+      ShadowAPI.clearToken();
+      window.location.href = '/login.html';
+    });
+  }
+
+  async function saveProfile(payload) {
+    try {
+      await ShadowAPI.put('/api/auth?action=profile', payload);
+      el('profileAlert').innerHTML = '<div class="alert alert-success">Profile updated.</div>';
+      me = { ...me, ...payload };
+      ShadowAPI.setUser(me);
+      setAvatar(el('myAvatar'), me);
+      setTimeout(() => { el('profileModal').style.display = 'none'; el('profileAlert').innerHTML = ''; }, 1200);
+    } catch (err) {
+      el('profileAlert').innerHTML = `<div class="alert alert-error">${err.message}</div>`;
+    }
+  }
+
+  // ---------- Continuous location updates ----------
+  // Only runs while the person has opted in via the profile toggle, and only
+  // while this tab is open. Updates are throttled to once every 30s so we
+  // don't spam the server on every small GPS jitter.
+  let lastLocationSync = 0;
+  const LOCATION_SYNC_INTERVAL_MS = 30000;
+
+  function startLocationWatch() {
+    if (!navigator.geolocation || locationWatchId !== null) return;
+    locationWatchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = Date.now();
+        if (now - lastLocationSync < LOCATION_SYNC_INTERVAL_MS) return;
+        lastLocationSync = now;
+        ShadowAPI.put('/api/auth?action=profile', {
+          shareLocation: true,
+          location: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+        }).catch(() => {});
+      },
+      () => {}, // ignore errors (e.g. permission denied) — sharing just won't update
+      { enableHighAccuracy: false, maximumAge: 20000, timeout: 15000 }
+    );
+  }
+
+  function stopLocationWatch() {
+    if (locationWatchId !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(locationWatchId);
+      locationWatchId = null;
+    }
+  }
+
+  // ---------- Static event bindings ----------
+  function bindStaticEvents() {
+    el('composerForm').addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
+    el('messageInput').addEventListener('input', (e) => { autoGrow(e.target); handleTypingInput(); });
+    el('messageInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    el('emojiBtn').addEventListener('click', (e) => { e.stopPropagation(); el('emojiPicker').classList.toggle('show'); });
+    document.addEventListener('click', (e) => { if (!el('emojiPicker').contains(e.target) && e.target.id !== 'emojiBtn') el('emojiPicker').classList.remove('show'); });
+
+    el('backBtn').addEventListener('click', () => {
+      el('appShell').classList.remove('show-chat');
+    });
+
+    el('searchConversations').addEventListener('input', (e) => renderConversationList(e.target.value));
+    el('cancelReplyBtn').addEventListener('click', cancelReply);
+
+    bindNewChatModal();
+    bindAttachments();
+    bindMoreMenu();
+    bindReportModal();
+    bindProfileModal();
+  }
+
+  function autoGrow(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+  }
+
+  function formatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+  }
+
+  init();
+})();
